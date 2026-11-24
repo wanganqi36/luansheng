@@ -2,99 +2,215 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-# ---------- 页面配置 ----------
-st.set_page_config(page_title="平行板电容器数字孪生平台", layout="wide")
+# ===================== 页面配置 =====================
+st.set_page_config(
+    page_title="平行板电容器数字孪生平台",
+    page_icon="🔬",
+    layout="wide"
+)
+
 st.title("🔬 平行板电容器数字孪生平台")
 st.caption("微创手术机器人位移传感器 · 电容式位移测量仿真")
 
-# ---------- 常量 ----------
-EPS0 = 8.854e-12          # 真空介电常数 F/m
-K_E  = 8.988e9            # 静电力常量
+# ===================== 物理常数 =====================
+EPS0 = 8.85e-12   # 真空介电常数 F/m
 
-# ---------- 侧边栏：可调参数 ----------
-st.sidebar.header("⚙️ 参数调节")
-S = st.sidebar.slider("极板正对面积 S (cm²)", 10.0, 500.0, 100.0, 5.0)
-d = st.sidebar.slider("极板间距 d (mm)", 0.1, 20.0, 5.0, 0.1)
-Q = st.sidebar.slider("极板电荷量 Q (nC)", 1.0, 200.0, 50.0, 1.0)
+# 介质相对介电常数
+MEDIA = {
+    "真空 (εr=1.0)": 1.0,
+    "空气 (εr=1.0006)": 1.0006,
+    "纸 (εr=3.5)": 3.5,
+    "玻璃 (εr=5.0)": 5.0,
+    "云母 (εr=6.0)": 6.0,
+    "陶瓷 (εr=10.0)": 10.0,
+}
 
-medium = st.sidebar.selectbox("介质类型", ["真空/空气", "云母", "陶瓷", "聚四氟乙烯"])
-eps_r = {"真空/空气": 1.0, "云母": 6.0, "陶瓷": 200.0, "聚四氟乙烯": 2.1}[medium]
+# ===================== 侧边栏参数调节 =====================
+with st.sidebar:
+    st.header("⚙️ 参数调节")
 
-mode = st.sidebar.radio("工作模式", ["电荷 Q 恒定（孤立）", "电压 U 恒定（接电源）"])
+    S = st.slider("极板面积 S (cm²)", 10.0, 500.0, 100.0, 5.0)
+    d = st.slider("极板间距 d (mm)", 1.0, 10.0, 5.0, 0.1)
+    Q = st.slider("电荷量 Q (nC)", 1.0, 200.0, 50.0, 1.0)
 
-# ---------- 核心物理公式 ----------
-S_m = S * 1e-4            # cm² -> m²
-d_m = d * 1e-3            # mm   -> m
-Q_c = Q * 1e-9            # nC   -> C
+    st.divider()
+    media_name = st.selectbox("介质类型", list(MEDIA.keys()), index=0)
+    er = MEDIA[media_name]
 
-C = eps_r * EPS0 * S_m / d_m          # ★ 核心公式 C = εS/d
-sigma = Q_c / S_m                     # 电荷面密度 σ = Q/S
-E_field = sigma / (eps_r * EPS0)      # ★ 板间场强 E = σ/ε
-U = Q_c / C                           # 电压 U = Q/C
-F = Q_c**2 / (2 * eps_r * EPS0 * S_m) # 极板间吸引力
+    st.divider()
+    mode = st.radio("工作模式", ["电荷Q恒定", "电压U恒定"], index=0)
 
-# ---------- 指标卡 ----------
+    st.divider()
+    st.markdown(
+        "**核心公式**\n\n"
+        "$$C = \\frac{\\varepsilon_0 \\varepsilon_r S}{d}$$\n\n"
+        "$$E = \\frac{\\sigma}{\\varepsilon_0 \\varepsilon_r} = \\frac{U}{d}$$\n\n"
+        "$$\\sigma = \\frac{Q}{S} \\qquad U = \\frac{Q}{C}$$"
+    )
+
+# ===================== 物理计算 =====================
+S_m2 = S * 1e-4        # cm² -> m²
+d_m = d * 1e-3         # mm  -> m
+Q_C = Q * 1e-9         # nC  -> C
+
+# 电容
+C = EPS0 * er * S_m2 / d_m          # F
+C_pF = C * 1e12                     # pF
+
+# 电荷面密度
+sigma = Q_C / S_m2                  # C/m²
+sigma_nC = sigma * 1e9              # nC/m²
+
+# 电压与场强（区分两种工作模式）
+if mode == "电荷Q恒定":
+    U = Q_C / C                     # V
+    E = U / d_m                     # V/m
+    U_show, E_show = U, E
+else:
+    U = Q_C / C                     # 基准电压
+    E = sigma / (EPS0 * er)         # 电压恒定时 E 只与面密度和介质有关
+    U_show, E_show = U, E
+
+# ===================== 指标卡片 =====================
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("电容 C", f"{C*1e12:.2f} pF")
-c2.metric("场强 E", f"{E_field:.2f} V/m")
-c3.metric("电压 U", f"{U:.3f} V")
-c4.metric("面密度 σ", f"{sigma*1e9:.2f} nC/m²")
+c1.metric("电容 C", f"{C_pF:.2f} pF")
+c2.metric("场强 E", f"{E_show:.2f} V/m")
+c3.metric("电压 U", f"{U_show:.3f} V")
+c4.metric("面密度 σ", f"{sigma_nC:.2f} nC/m²")
 
 st.divider()
 
-# ---------- 可视化：电容器剖面图 ----------
+# ===================== 图1：电容器实时剖面 =====================
 st.subheader("📐 电容器实时剖面")
+
+# 固定坐标范围：极板间距变化时图形不再自动缩放
+Y_MAX = 7.0        # 固定 y 轴半高
+PLATE_W = 8.0      # 极板半宽（固定，代表面积 S）
+
 fig = go.Figure()
-# 上极板
-fig.add_shape(type="rect", x0=0, x1=1, y0=0.6, y1=0.6+0.05, fillcolor="#4e79a7")
-# 下极板
-fig.add_shape(type="rect", x0=0, x1=1, y0=0.35, y1=0.35+0.05, fillcolor="#e15759")
-# 电场线（数量随 σ 变化，方向向下）
-n_lines = int(np.clip(S/15, 3, 30))
-for x in np.linspace(0.05, 0.95, n_lines):
-    fig.add_annotation(arrowhead=2, arrowsize=1.2, x=x, y=0.58,
-                       text="", showarrow=True, ax=0, ay=18, arrowcolor="#f2a900")
-fig.update_layout(height=320, xaxis=dict(range=[0,1], visible=False),
-                  yaxis=dict(range=[0.2,0.8], visible=False),
-                  margin=dict(l=10,r=10,t=10,b=10),
-                  annotations=[
-                    dict(x=1.02, y=0.62, text=f"+Q = {Q:.1f} nC", showarrow=False),
-                    dict(x=1.02, y=0.36, text=f"−Q", showarrow=False),
-                    dict(x=0.5, y=0.48, text=f"d = {d:.1f} mm", showarrow=False,
-                         font=dict(size=14, color="white"))])
+
+# 上极板（正，蓝色）—— 厚度随面积 S 变化，直观体现面积影响
+plate_thick = 0.4 + (S / 500.0) * 0.8
+fig.add_shape(
+    type="rect",
+    x0=-PLATE_W, x1=PLATE_W,
+    y0=d / 2, y1=d / 2 + plate_thick,
+    fillcolor="#1f77b4", line=dict(width=0)
+)
+
+# 下极板（负，红色）
+fig.add_shape(
+    type="rect",
+    x0=-PLATE_W, x1=PLATE_W,
+    y0=-d / 2 - plate_thick, y1=-d / 2,
+    fillcolor="#d62728", line=dict(width=0)
+)
+
+# 极板间电场线（虚线，数量随场强变化）
+n_lines = int(np.clip(E_show / 80000, 3, 15))
+for x in np.linspace(-PLATE_W * 0.8, PLATE_W * 0.8, n_lines):
+    fig.add_shape(
+        type="line",
+        x0=x, x1=x, y0=-d / 2, y1=d / 2,
+        line=dict(color="rgba(120,120,120,0.55)", width=1, dash="dot")
+    )
+
+# 间距标注箭头
+fig.add_annotation(
+    x=PLATE_W * 0.55, y=0,
+    text=f"<b>d = {d:.1f} mm</b>",
+    showarrow=False,
+    font=dict(size=15, color="#333333"),
+    bgcolor="rgba(255,255,255,0.85)",
+    bordercolor="#999999",
+    borderwidth=1, borderpad=4
+)
+
+# 正负号标注
+fig.add_annotation(x=-PLATE_W * 0.85, y=d / 2 + plate_thick / 2,
+                   text="<b>+</b>", showarrow=False,
+                   font=dict(size=16, color="white"))
+fig.add_annotation(x=-PLATE_W * 0.85, y=-d / 2 - plate_thick / 2,
+                   text="<b>−</b>", showarrow=False,
+                   font=dict(size=16, color="white"))
+
+fig.update_layout(
+    height=380,
+    margin=dict(l=20, r=20, t=20, b=20),
+    xaxis=dict(range=[-10, 10], showgrid=False, zeroline=False,
+               showticklabels=False, fixedrange=True),
+    yaxis=dict(range=[-Y_MAX, Y_MAX], showgrid=False, zeroline=False,
+               showticklabels=False, fixedrange=True, scaleanchor="x"),
+    plot_bgcolor="white",
+    showlegend=False
+)
+
 st.plotly_chart(fig, use_container_width=True)
 
-# ---------- 核心曲线：C-d 关系 ----------
-st.subheader("📈 电容 C 随间距 d 的变化（反比关系）")
-d_arr = np.linspace(0.1, 20, 300) * 1e-3
-C_arr = eps_r * EPS0 * S_m / d_arr * 1e12   # pF
+st.divider()
+
+# ===================== 图2：C-d 特性曲线（核心） =====================
+st.subheader("📈 电容 C 随极板间距 d 的变化特性")
+
+d_arr = np.linspace(1.0, 10.0, 200)                       # mm
+C_arr = EPS0 * er * S_m2 / (d_arr * 1e-3) * 1e12          # pF
 
 fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=d_arr*1e3, y=C_arr, name="C(d)", line=dict(width=3)))
-fig2.add_trace(go.Scatter(x=[d], y=[C*1e12], mode="markers+text",
-                          text=[f"当前点<br>d={d:.1f}mm<br>C={C*1e12:.1f}pF"],
-                          textposition="top center",
-                          marker=dict(size=14, color="red")))
-fig2.update_layout(xaxis_title="极板间距 d (mm)", yaxis_title="电容 C (pF)",
-                   height=380, margin=dict(l=40,r=20,t=20,b=40))
+
+fig2.add_trace(go.Scatter(
+    x=d_arr, y=C_arr, mode="lines", name="C-d 理论曲线",
+    line=dict(color="#1f77b4", width=3)
+))
+
+# 当前工作点（拖动滑块时红点沿曲线滑动）
+fig2.add_trace(go.Scatter(
+    x=[d], y=[C_pF], mode="markers+text",
+    text=[f"  当前点 d={d:.1f}mm, C={C_pF:.2f}pF"],
+    textposition="top right",
+    textfont=dict(size=12, color="red"),
+    marker=dict(size=15, color="red", symbol="circle",
+                line=dict(width=2, color="white")),
+    name="当前工作点"
+))
+
+# 辅助虚线
+fig2.add_shape(type="line", x0=d, x1=d, y0=0, y1=C_pF,
+               line=dict(color="red", width=1, dash="dash"))
+fig2.add_shape(type="line", x0=0, x1=d, y0=C_pF, y1=C_pF,
+               line=dict(color="red", width=1, dash="dash"))
+
+fig2.update_layout(
+    height=380,
+    margin=dict(l=20, r=20, t=30, b=20),
+    xaxis=dict(title="极板间距 d (mm)", gridcolor="#eeeeee"),
+    yaxis=dict(title="电容 C (pF)", gridcolor="#eeeeee"),
+    plot_bgcolor="white",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    hovermode="x unified"
+)
+
 st.plotly_chart(fig2, use_container_width=True)
 
-# ---------- 传感器灵敏度分析 ----------
-st.subheader("🎯 传感器灵敏度分析（位移反推）")
-dd = st.slider("施加微小位移 Δd (μm)", 1, 500, 50)
-d2 = d_m + dd*1e-6
-C2 = eps_r * EPS0 * S_m / d2
-dC = (C2 - C) * 1e12
-st.write(f"- 位移 Δd = **{dd} μm** 时，电容变化 ΔC = **{dC:.3f} pF**")
-st.write(f"- 灵敏度 S_c = ΔC/Δd = **{abs(dC)/(dd*1e-3):.3f} pF/mm**")
-st.info("💡 结论：d 越小，同样位移引起的 ΔC 越大，传感器灵敏度越高；"
-        "但 d 过小易击穿，需折中选择。")
-
 st.divider()
-st.markdown("""
-**核心物理公式**
-- 电容决定式：$C=\\dfrac{\\varepsilon_r\\varepsilon_0 S}{d}$
-- 电荷面密度：$\\sigma=Q/S$
-- 板间场强：$E=\\dfrac{\\sigma}{\\varepsilon_0\\varepsilon_r}=\\dfrac{Q}{\\varepsilon_0\\varepsilon_r S}$
-- 电压：$U=Q/C$
-""")
+
+# ===================== 结论区 =====================
+st.subheader("💡 仿真结论")
+
+if mode == "电荷Q恒定":
+    st.markdown(
+        f"- 当前工作模式下 **Q 恒定**，由 $U = Q/C$ 可知：d 增大 → C 减小 → **U 增大**，"
+        f"而场强 $E = \\sigma/\\varepsilon_0\\varepsilon_r$ **保持不变**。\n"
+        f"- 当前 C = **{C_pF:.2f} pF**，U = **{U_show:.2f} V**，E = **{E_show:.0f} V/m**。"
+    )
+else:
+    st.markdown(
+        f"- 当前工作模式下 **U 恒定**，由 $E = U/d$ 可知：d 增大 → **E 减小**。\n"
+        f"- 当前 C = **{C_pF:.2f} pF**，E = **{E_show:.0f} V/m**。"
+    )
+
+st.markdown(
+    f"- **核心规律**：$C = \\varepsilon_0\\varepsilon_r S/d$，电容 C 与极板间距 d 成**反比**，"
+    f"与极板面积 S、相对介电常数 εᵣ 成**正比**。\n"
+    f"- **应用价值**：这正是电容式位移传感器的工作原理——被测物体带动极板移动使 d 改变，"
+    f"通过测量 C 的变化即可反推出微小位移量，适用于微创手术机器人的高精度位置检测。"
+)
